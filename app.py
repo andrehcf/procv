@@ -6,7 +6,7 @@ from io import BytesIO
 st.set_page_config(page_title="Gerador PROCV Dinâmico", layout="wide")
 
 st.title("📊 Painel de Análise Dinâmica (PROCV)")
-st.markdown("Faça o cruzamento e **escolha na hora** qual gráfico deseja visualizar.")
+st.markdown("Faça o cruzamento, filtre os dados e visualize os gráficos.")
 st.divider()
 
 # --- 1. UPLOAD DE ARQUIVOS ---
@@ -32,7 +32,7 @@ if arquivo_principal and arquivo_base:
 
         cols_disponiveis = [c for c in df_base.columns if c != chave_base]
 
-        # Tenta achar "Serviço" para facilitar
+        # Tenta pré-selecionar "Serviço"
         pre_selecao = [c for c in cols_disponiveis if "serviço" in c.lower()]
 
         colunas_desejadas = st.multiselect(
@@ -57,41 +57,75 @@ if arquivo_principal and arquivo_base:
                 if chave_main != chave_base and chave_base not in colunas_desejadas:
                     df_resultado = df_resultado.drop(columns=[chave_base])
 
-                # Salva no estado para não perder ao interagir com filtros
+                # Salva no estado
                 st.session_state['df_resultado'] = df_resultado
 
     except Exception as e:
         st.error(f"Erro: {e}")
 
-# --- 3. ÁREA DINÂMICA E VISUALIZAÇÃO ---
+# --- SEÇÃO DE RESULTADOS ---
 if 'df_resultado' in st.session_state:
     df = st.session_state['df_resultado']
 
-    st.subheader("📈 Análise Gráfica")
+    # --- 3. FILTROS GLOBAIS (NOVO LUGAR) ---
+    st.subheader("🔍 Filtros Globais")
 
-    # Menu de Configuração do Gráfico
+    # Layout do filtro: 1/3 para escolher a coluna, 2/3 para escolher os valores
+    f_col1, f_col2 = st.columns([1, 2])
+
+    with f_col1:
+        # Tenta achar 'equipe', 'time', 'setor'
+        cols_equipe = [c for c in df.columns if any(x in c.lower() for x in ['equipe', 'time', 'setor'])]
+        index_equipe = df.columns.get_loc(cols_equipe[0]) if cols_equipe else 0
+
+        coluna_filtro_equipe = st.selectbox(
+            "Filtrar por qual coluna? (Ex: Equipe)",
+            options=df.columns,
+            index=index_equipe
+        )
+
+    with f_col2:
+        lista_equipes = df[coluna_filtro_equipe].dropna().unique()
+        equipes_selecionadas = st.multiselect(
+            f"Selecione itens de '{coluna_filtro_equipe}':",
+            options=lista_equipes,
+            default=lista_equipes,
+            placeholder="Escolha um ou mais itens..."
+        )
+
+    # Aplica o filtro
+    if equipes_selecionadas:
+        df_filtrado = df[df[coluna_filtro_equipe].isin(equipes_selecionadas)]
+    else:
+        df_filtrado = df
+
+    st.info(f"Mostrando **{len(df_filtrado)}** linhas após filtros.")
+    st.divider()
+
+    # --- 4. ANÁLISE GRÁFICA ---
+    st.subheader(f"📈 Análise Gráfica")
+
     box_col1, box_col2, box_col3 = st.columns(3)
 
     with box_col1:
         coluna_eixo_x = st.selectbox(
-            "O que você quer analisar? (Eixo X)",
-            options=df.columns,
-            index=len(df.columns) - 1
+            "O que analisar? (Eixo X)",
+            options=df_filtrado.columns,
+            index=len(df_filtrado.columns) - 1
         )
 
     with box_col2:
         tipo_grafico = st.selectbox("Tipo de Gráfico:", ["Barras", "Pizza", "Rosca", "Funil"])
 
     with box_col3:
-        qtd_top = st.slider("Mostrar quantos itens? (Top N)", 5, 50, 10)
+        qtd_top = st.slider("Top N itens:", 5, 50, 10)
 
-    # --- PROCESSAMENTO DO GRÁFICO ---
-    dados_agrupados = df[coluna_eixo_x].value_counts(dropna=False).reset_index()
+    # Processamento e Plotagem
+    dados_agrupados = df_filtrado[coluna_eixo_x].value_counts(dropna=False).reset_index()
     dados_agrupados.columns = ['Categoria', 'Total']
     dados_agrupados['Categoria'] = dados_agrupados['Categoria'].fillna("NÃO ENCONTRADO / VAZIO")
     dados_plot = dados_agrupados.head(qtd_top)
 
-    # --- PLOTAGEM ---
     if tipo_grafico == "Barras":
         fig = px.bar(
             dados_plot, x='Total', y='Categoria', orientation='h',
@@ -113,29 +147,25 @@ if 'df_resultado' in st.session_state:
 
     st.divider()
 
-    # --- 4. TABELA E DOWNLOAD (CORRIGIDO) ---
+    # --- 5. TABELA E DOWNLOAD ---
 
-    # Prepara o arquivo Excel na memória
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False)
+        df_filtrado.to_excel(writer, index=False)
 
-    # Layout: Texto na esquerda, Botão na direita
     col_header, col_btn = st.columns([3, 1])
 
     with col_header:
-        st.subheader("📋 Visualização dos Dados")
+        st.subheader("📋 Visualização da Tabela")
 
     with col_btn:
-        # Botão alinhado à direita do header, mas acima da tabela
         st.download_button(
-            label="📥 Baixar Excel Completo",
+            label="📥 Baixar Excel Filtrado",
             data=buffer.getvalue(),
-            file_name="resultado_procv_dinamico.xlsx",
+            file_name="resultado_equipes_filtrado.xlsx",
             mime="application/vnd.ms-excel",
             type="primary",
-            use_container_width=True  # Botão ocupa toda a largura da coluna dele
+            use_container_width=True
         )
 
-    # Tabela ocupa a largura total agora
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df_filtrado, use_container_width=True)
